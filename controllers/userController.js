@@ -3,8 +3,12 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { sendOTPEmail } = require("../emailService");
 
+// NEW: Temporary registration OTP storage
+const registrationOTPs = new Map();
 
 
+// OLD CODE
+/*
 const createUser = async (req, res) => {
 
     const {
@@ -14,8 +18,6 @@ const createUser = async (req, res) => {
         address
     } = req.body;
 
-
-    
     if (!name) {
         return res.status(400).json({
             message: "Name is required"
@@ -34,8 +36,6 @@ const createUser = async (req, res) => {
         });
     }
 
-
-    // Email validation
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     if (!emailPattern.test(email)) {
@@ -44,10 +44,8 @@ const createUser = async (req, res) => {
         });
     }
 
-
     try {
 
-        // Check if email already exists
         const checkSql = `
             SELECT id, is_verified
             FROM users
@@ -61,22 +59,17 @@ const createUser = async (req, res) => {
 
                 if (err) {
                     console.log(err);
-
                     return res.status(500).json({
                         message: "Database error"
                     });
                 }
 
-
-                // Email already exists
                 if (results.length > 0) {
 
                     if (results[0].is_verified) {
-
                         return res.status(409).json({
                             message: "Email already exists"
                         });
-
                     }
 
                     return res.status(409).json({
@@ -84,27 +77,19 @@ const createUser = async (req, res) => {
                     });
                 }
 
-
-                // Hash password
                 const hashedPassword = await bcrypt.hash(
                     password,
                     10
                 );
 
-
-                // Generate 6 digit OTP
                 const otp = Math.floor(
                     100000 + Math.random() * 900000
                 ).toString();
 
-
-                // OTP expiry = 10 minutes
                 const otpExpiry = new Date(
                     Date.now() + 10 * 60 * 1000
                 );
 
-
-                // Insert user
                 const sql = `
                     INSERT INTO users
                     (
@@ -118,7 +103,6 @@ const createUser = async (req, res) => {
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 `;
-
 
                 db.query(
                     sql,
@@ -138,7 +122,6 @@ const createUser = async (req, res) => {
                             console.log(err);
 
                             if (err.code === "ER_DUP_ENTRY") {
-
                                 return res.status(409).json({
                                     message: "Email already exists"
                                 });
@@ -149,27 +132,20 @@ const createUser = async (req, res) => {
                             });
                         }
 
-
                         try {
 
-                            // Send OTP email
                             await sendOTPEmail(
                                 email,
                                 otp
                             );
 
-
                             res.status(201).json({
-
                                 message:
                                     "Registration successful. OTP sent to your email",
-
                                 userId:
                                     result.insertId,
-
                                 email: email
                             });
-
 
                         } catch (emailError) {
 
@@ -179,7 +155,6 @@ const createUser = async (req, res) => {
                             );
 
                             return res.status(500).json({
-
                                 message:
                                     "User created but OTP email could not be sent"
                             });
@@ -198,10 +173,295 @@ const createUser = async (req, res) => {
         });
     }
 };
+*/
 
 
+// NEW: Send registration OTP
+const sendRegistrationOTP = async (req, res) => {
+
+    const { email } = req.body;
+
+    if (!email) {
+        return res.status(400).json({
+            message: "Email is required"
+        });
+    }
+
+    const emailPattern =
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!emailPattern.test(email)) {
+        return res.status(400).json({
+            message: "Invalid email"
+        });
+    }
+
+    try {
+
+        const checkSql = `
+            SELECT id, is_verified
+            FROM users
+            WHERE email = ?
+        `;
+
+        db.query(
+            checkSql,
+            [email],
+            async (err, results) => {
+
+                if (err) {
+
+                    console.log(err);
+
+                    return res.status(500).json({
+                        message: "Database error"
+                    });
+                }
+
+                if (results.length > 0) {
+
+                    if (results[0].is_verified) {
+
+                        return res.status(409).json({
+                            message: "Email already exists"
+                        });
+                    }
+
+                    return res.status(409).json({
+                        message: "Email already registered"
+                    });
+                }
+
+                const otp = Math.floor(
+                    100000 + Math.random() * 900000
+                ).toString();
+
+                const expiry =
+                    Date.now()  + 20 * 60 * 1000;
+
+                registrationOTPs.set(email, {
+                    otp,
+                    expiry,
+                    verified: false
+                });
+
+                try {
+
+                    await sendOTPEmail(
+                        email,
+                        otp
+                    );
+
+                    return res.status(200).json({
+                        message: "OTP sent to your email"
+                    });
+
+                } catch (emailError) {
+
+                    console.log(
+                        "Email error:",
+                        emailError
+                    );
+
+                    registrationOTPs.delete(email);
+
+                    return res.status(500).json({
+                        message: "Failed to send OTP email"
+                    });
+                }
+            }
+        );
+
+    } catch (error) {
+
+        console.log(
+            "Send OTP error:",
+            error
+        );
+
+        return res.status(500).json({
+            message: "Server error"
+        });
+    }
+};
 
 
+// NEW: Register only after OTP verification
+const createUser = async (req, res) => {
+
+    const {
+        name,
+        email,
+        password,
+        address
+    } = req.body;
+
+    if (!name) {
+        return res.status(400).json({
+            message: "Name is required"
+        });
+    }
+
+    if (!email) {
+        return res.status(400).json({
+            message: "Email is required"
+        });
+    }
+
+    if (!password) {
+        return res.status(400).json({
+            message: "Password is required"
+        });
+    }
+
+    const emailPattern =
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!emailPattern.test(email)) {
+        return res.status(400).json({
+            message: "Invalid email"
+        });
+    }
+
+    try {
+
+        // NEW: Check OTP verification
+        const otpData = registrationOTPs.get(email);
+
+        if (!otpData) {
+
+            return res.status(403).json({
+                message: "Please verify your email first"
+            });
+        }
+
+        if (Date.now() > otpData.expiry) {
+
+            registrationOTPs.delete(email);
+
+            return res.status(403).json({
+                message: "OTP has expired. Please verify again"
+            });
+        }
+
+        if (!otpData.verified) {
+
+            return res.status(403).json({
+                message: "Please verify your email first"
+            });
+        }
+
+        const checkSql = `
+            SELECT id
+            FROM users
+            WHERE email = ?
+        `;
+
+        db.query(
+            checkSql,
+            [email],
+            async (err, results) => {
+
+                if (err) {
+
+                    console.log(err);
+
+                    return res.status(500).json({
+                        message: "Database error"
+                    });
+                }
+
+                if (results.length > 0) {
+
+                    return res.status(409).json({
+                        message: "Email already exists"
+                    });
+                }
+
+                const hashedPassword =
+                    await bcrypt.hash(
+                        password,
+                        10
+                    );
+
+                const sql = `
+                    INSERT INTO users
+                    (
+                        name,
+                        email,
+                        password,
+                        address,
+                        is_verified
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                `;
+
+                db.query(
+                    sql,
+                    [
+                        name,
+                        email,
+                        hashedPassword,
+                        address,
+                        true
+                    ],
+                    (err, result) => {
+
+                        if (err) {
+
+                            console.log(err);
+
+                            if (
+                                err.code ===
+                                "ER_DUP_ENTRY"
+                            ) {
+
+                                return res.status(409).json({
+                                    message:
+                                        "Email already exists"
+                                });
+                            }
+
+                            return res.status(500).json({
+                                message:
+                                    "Database error"
+                            });
+                        }
+
+                        // NEW: OTP remove
+                        registrationOTPs.delete(email);
+
+                        return res.status(201).json({
+
+                            message:
+                                "Registration successful",
+
+                            userId:
+                                result.insertId,
+
+                            email:
+                                email
+                        });
+                    }
+                );
+            }
+        );
+
+    } catch (error) {
+
+        console.log(
+            "Registration error:",
+            error
+        );
+
+        return res.status(500).json({
+            message: "Server error"
+        });
+    }
+};
+
+
+// Test email
 const sendTestEmail = async (req, res) => {
 
     try {
@@ -210,17 +470,14 @@ const sendTestEmail = async (req, res) => {
             100000 + Math.random() * 900000
         ).toString();
 
-
         await sendOTPEmail(
             process.env.EMAIL_USER,
             otp
         );
 
-
         res.json({
             message: "Test email sent successfully"
         });
-
 
     } catch (error) {
 
@@ -233,7 +490,6 @@ const sendTestEmail = async (req, res) => {
 };
 
 
-
 // Login User
 const loginUser = async (req, res) => {
 
@@ -242,13 +498,11 @@ const loginUser = async (req, res) => {
         password
     } = req.body;
 
-
     const sql = `
         SELECT *
         FROM users
         WHERE email = ?
     `;
-
 
     db.query(
         sql,
@@ -264,26 +518,23 @@ const loginUser = async (req, res) => {
                 });
             }
 
-
             if (results.length === 0) {
 
                 return res.status(401).json({
-                    message: "Invalid email or password"
+                    message:
+                        "Invalid email or password"
                 });
             }
-
 
             const user = results[0];
 
-
-            // Check email verification
             if (!user.is_verified) {
 
                 return res.status(403).json({
-                    message: "Please verify your email first"
+                    message:
+                        "Please verify your email first"
                 });
             }
-
 
             const isPasswordMatch =
                 await bcrypt.compare(
@@ -291,14 +542,13 @@ const loginUser = async (req, res) => {
                     user.password
                 );
 
-
             if (!isPasswordMatch) {
 
                 return res.status(401).json({
-                    message: "Invalid email or password"
+                    message:
+                        "Invalid email or password"
                 });
             }
-
 
             const token = jwt.sign(
                 {
@@ -310,7 +560,6 @@ const loginUser = async (req, res) => {
                     expiresIn: "1h"
                 }
             );
-
 
             res.json({
 
@@ -329,7 +578,11 @@ const loginUser = async (req, res) => {
     );
 };
 
+
+// OLD CODE
+/*
 const verifyOTP = (req, res) => {
+
     const { email, otp } = req.body;
 
     if (!email || !otp) {
@@ -345,7 +598,9 @@ const verifyOTP = (req, res) => {
     `;
 
     db.query(sql, [email], (err, results) => {
+
         if (err) {
+
             console.log(err);
 
             return res.status(500).json({
@@ -354,6 +609,7 @@ const verifyOTP = (req, res) => {
         }
 
         if (results.length === 0) {
+
             return res.status(404).json({
                 message: "User not found"
             });
@@ -362,12 +618,14 @@ const verifyOTP = (req, res) => {
         const user = results[0];
 
         if (user.is_verified) {
+
             return res.status(400).json({
                 message: "Email is already verified"
             });
         }
 
         if (user.verification_otp !== otp) {
+
             return res.status(400).json({
                 message: "Invalid OTP"
             });
@@ -377,6 +635,7 @@ const verifyOTP = (req, res) => {
             !user.otp_expiry ||
             new Date() > new Date(user.otp_expiry)
         ) {
+
             return res.status(400).json({
                 message: "OTP has expired"
             });
@@ -391,25 +650,93 @@ const verifyOTP = (req, res) => {
             WHERE email = ?
         `;
 
-        db.query(updateSql, [email], (err) => {
-            if (err) {
-                console.log(err);
+        db.query(
+            updateSql,
+            [email],
+            (err) => {
 
-                return res.status(500).json({
-                    message: "Database error"
+                if (err) {
+
+                    console.log(err);
+
+                    return res.status(500).json({
+                        message: "Database error"
+                    });
+                }
+
+                res.json({
+                    message:
+                        "Email verified successfully"
                 });
             }
-
-            res.json({
-                message: "Email verified successfully"
-            });
-        });
+        );
     });
 };
+*/
+
+
+// NEW: Verify registration OTP
+const verifyOTP = (req, res) => {
+
+    const {
+        email,
+        otp
+    } = req.body;
+
+    if (!email || !otp) {
+
+        return res.status(400).json({
+            message:
+                "Email and OTP are required"
+        });
+    }
+
+    const otpData =
+        registrationOTPs.get(email);
+
+    if (!otpData) {
+
+        return res.status(400).json({
+            message:
+                "OTP not found. Please send OTP again"
+        });
+    }
+
+    if (Date.now() > otpData.expiry) {
+
+        registrationOTPs.delete(email);
+
+        return res.status(400).json({
+            message:
+                "OTP has expired. Please send OTP again"
+        });
+    }
+
+    if (otpData.otp !== otp) {
+
+        return res.status(400).json({
+            message: "Invalid OTP"
+        });
+    }
+
+    registrationOTPs.set(email, {
+        ...otpData,
+        verified: true
+    });
+
+    return res.json({
+        message:
+            "Email verified successfully"
+    });
+};
+
+
 const forgotPassword = (req, res) => {
+
     const { email } = req.body;
 
     if (!email) {
+
         return res.status(400).json({
             message: "Email is required"
         });
@@ -421,144 +748,189 @@ const forgotPassword = (req, res) => {
         WHERE email = ?
     `;
 
-    db.query(sql, [email], (err, results) => {
-        if (err) {
-            console.log(err);
-            return res.status(500).json({
-                message: "Database error"
-            });
-        }
+    db.query(
+        sql,
+        [email],
+        (err, results) => {
 
-        // Email database me nahi mila
-        if (results.length === 0) {
-            return res.status(404).json({
-                message: "Email not registered"
-            });
-        }
+            if (err) {
 
-        const user = results[0];
+                console.log(err);
 
-        // Email verify nahi hai
-        if (!user.is_verified) {
-            return res.status(403).json({
-                message: "Please verify your email first"
-            });
-        }
-
-        // 6 digit OTP
-        const otp = Math.floor(
-            100000 + Math.random() * 900000
-        ).toString();
-
-        // OTP 10 minutes ke liye valid
-        const expiry = new Date(
-            Date.now() + 10 * 60 * 1000
-        );
-
-        const updateSql = `
-            UPDATE users
-            SET
-                reset_otp = ?,
-                reset_otp_expiry = ?
-            WHERE email = ?
-        `;
-
-        db.query(
-            updateSql,
-            [otp, expiry, email],
-            async (err) => {
-                if (err) {
-                    console.log(err);
-                    return res.status(500).json({
-                        message: "Database error"
-                    });
-                }
-
-                try {
-                    await sendOTPEmail(email, otp);
-
-                    res.json({
-                        message: "Password reset OTP sent to your email"
-                    });
-                } catch (error) {
-                    console.log(error);
-
-                    res.status(500).json({
-                        message: "Failed to send OTP email"
-                    });
-                }
+                return res.status(500).json({
+                    message: "Database error"
+                });
             }
-        );
-    });
+
+            if (results.length === 0) {
+
+                return res.status(404).json({
+                    message:
+                        "Email not registered"
+                });
+            }
+
+            const user = results[0];
+
+            if (!user.is_verified) {
+
+                return res.status(403).json({
+                    message:
+                        "Please verify your email first"
+                });
+            }
+
+            const otp = Math.floor(
+                100000 + Math.random() * 900000
+            ).toString();
+
+            const expiry = new Date(
+                Date.now()  + 20 * 60 * 1000
+            );
+
+            const updateSql = `
+                UPDATE users
+                SET
+                    reset_otp = ?,
+                    reset_otp_expiry = ?
+                WHERE email = ?
+            `;
+
+            db.query(
+                updateSql,
+                [otp, expiry, email],
+                async (err) => {
+
+                    if (err) {
+
+                        console.log(err);
+
+                        return res.status(500).json({
+                            message:
+                                "Database error"
+                        });
+                    }
+
+                    try {
+
+                        await sendOTPEmail(
+                            email,
+                            otp
+                        );
+
+                        res.json({
+                            message:
+                                "Password reset OTP sent to your email"
+                        });
+
+                    } catch (error) {
+
+                        console.log(error);
+
+                        res.status(500).json({
+                            message:
+                                `Failed to send OTP email ${error}`
+                        });
+                    }
+                }
+            );
+        }
+    );
 };
+
+
 const verifyResetOTP = (req, res) => {
 
-    const { email, otp } = req.body;
+    const {
+        email,
+        otp
+    } = req.body;
 
     if (!email || !otp) {
+
         return res.status(400).json({
-            message: "Email and OTP are required"
+            message:
+                "Email and OTP are required"
         });
     }
 
     const sql = `
-        SELECT reset_otp, reset_otp_expiry
+        SELECT
+            reset_otp,
+            reset_otp_expiry
         FROM users
         WHERE email = ?
     `;
 
-    db.query(sql, [email], (err, results) => {
+    db.query(
+        sql,
+        [email],
+        (err, results) => {
 
-        if (err) {
-            console.log(err);
+            if (err) {
 
-            return res.status(500).json({
-                message: "Database error"
+                console.log(err);
+
+                return res.status(500).json({
+                    message: "Database error"
+                });
+            }
+
+            if (results.length === 0) {
+
+                return res.status(404).json({
+                    message: "User not found"
+                });
+            }
+
+            const user = results[0];
+
+            if (user.reset_otp !== otp) {
+
+                return res.status(400).json({
+                    message: "Invalid OTP"
+                });
+            }
+
+            if (
+                new Date() >
+                new Date(user.reset_otp_expiry)
+            ) {
+
+                return res.status(400).json({
+                    message: "OTP expired"
+                });
+            }
+
+            res.json({
+                message:
+                    "OTP verified successfully"
             });
         }
-
-        if (results.length === 0) {
-            return res.status(404).json({
-                message: "User not found"
-            });
-        }
-
-        const user = results[0];
-
-        // OTP check
-        if (user.reset_otp !== otp) {
-            return res.status(400).json({
-                message: "Invalid OTP"
-            });
-        }
-
-        // Expiry check
-        if (new Date() > new Date(user.reset_otp_expiry)) {
-            return res.status(400).json({
-                message: "OTP expired"
-            });
-        }
-
-        res.json({
-            message: "OTP verified successfully"
-        });
-
-    });
+    );
 };
+
 
 const resetPassword = async (req, res) => {
 
-    const { email, password } = req.body;
+    const {
+        email,
+        password
+    } = req.body;
 
     if (!email || !password) {
+
         return res.status(400).json({
-            message: "Email and new password are required"
+            message:
+                "Email and new password are required"
         });
     }
 
     if (password.length < 6) {
+
         return res.status(400).json({
-            message: "Password must be at least 6 characters"
+            message:
+                "Password must be at least 6 characters"
         });
     }
 
@@ -568,73 +940,93 @@ const resetPassword = async (req, res) => {
         WHERE email = ?
     `;
 
-    db.query(sql, [email], async (err, results) => {
+    db.query(
+        sql,
+        [email],
+        async (err, results) => {
 
-        if (err) {
-            console.log(err);
+            if (err) {
 
-            return res.status(500).json({
-                message: "Database error"
-            });
-        }
+                console.log(err);
 
-        if (results.length === 0) {
-            return res.status(404).json({
-                message: "User not found"
-            });
-        }
+                return res.status(500).json({
+                    message: "Database error"
+                });
+            }
 
-        try {
+            if (results.length === 0) {
 
-            // Password ko hash karo
-            const hashedPassword = await bcrypt.hash(password, 10);
+                return res.status(404).json({
+                    message: "User not found"
+                });
+            }
 
-            const updateSql = `
-                UPDATE users
-                SET
-                    password = ?,
-                    reset_otp = NULL,
-                    reset_otp_expiry = NULL
-                WHERE email = ?
-            `;
+            try {
 
-            db.query(
-                updateSql,
-                [hashedPassword, email],
-                (err) => {
+                const hashedPassword =
+                    await bcrypt.hash(
+                        password,
+                        10
+                    );
 
-                    if (err) {
-                        console.log(err);
+                const updateSql = `
+                    UPDATE users
+                    SET
+                        password = ?,
+                        reset_otp = NULL,
+                        reset_otp_expiry = NULL
+                    WHERE email = ?
+                `;
 
-                        return res.status(500).json({
-                            message: "Failed to reset password"
+                db.query(
+                    updateSql,
+                    [
+                        hashedPassword,
+                        email
+                    ],
+                    (err) => {
+
+                        if (err) {
+
+                            console.log(err);
+
+                            return res.status(500).json({
+                                message:
+                                    "Failed to reset password"
+                            });
+                        }
+
+                        res.json({
+                            message:
+                                "Password reset successfully"
                         });
                     }
+                );
 
-                    res.json({
-                        message: "Password reset successfully"
-                    });
-                }
-            );
+            } catch (error) {
 
-        } catch (error) {
+                console.log(error);
 
-            console.log(error);
-
-            res.status(500).json({
-                message: "Password hashing failed"
-            });
+                res.status(500).json({
+                    message:
+                        "Password hashing failed"
+                });
+            }
         }
-    });
+    );
 };
+
 
 const getUsers = (req, res) => {
 
     const sql = `
-        SELECT id, name, email, address
+        SELECT
+            id,
+            name,
+            email,
+            address
         FROM users
     `;
-
 
     db.query(
         sql,
@@ -649,25 +1041,26 @@ const getUsers = (req, res) => {
                 });
             }
 
-
             res.json(results);
         }
     );
 };
 
 
-
 const getUser = (req, res) => {
 
-    const id = Number(req.params.id);
-
+    const id =
+        Number(req.params.id);
 
     const sql = `
-        SELECT id, name, email, address
+        SELECT
+            id,
+            name,
+            email,
+            address
         FROM users
         WHERE id = ?
     `;
-
 
     db.query(
         sql,
@@ -683,7 +1076,6 @@ const getUser = (req, res) => {
                 });
             }
 
-
             if (results.length === 0) {
 
                 return res.status(404).json({
@@ -691,19 +1083,16 @@ const getUser = (req, res) => {
                 });
             }
 
-
             res.json(results[0]);
         }
     );
 };
 
 
-
 const updateUser = async (req, res) => {
 
-    const id = Number(req.params.id);
-
-
+    const id =
+        Number(req.params.id);
 
     if (req.user.id !== id) {
 
@@ -713,14 +1102,12 @@ const updateUser = async (req, res) => {
         });
     }
 
-
     const {
         name,
         email,
         password,
         address
     } = req.body;
-
 
     if (!name) {
 
@@ -729,14 +1116,12 @@ const updateUser = async (req, res) => {
         });
     }
 
-
     if (!email) {
 
         return res.status(400).json({
             message: "Email is required"
         });
     }
-
 
     if (!password) {
 
@@ -745,10 +1130,8 @@ const updateUser = async (req, res) => {
         });
     }
 
-
     const emailPattern =
         /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 
     if (!emailPattern.test(email)) {
 
@@ -757,10 +1140,11 @@ const updateUser = async (req, res) => {
         });
     }
 
-
     const hashedPassword =
-        await bcrypt.hash(password, 10);
-
+        await bcrypt.hash(
+            password,
+            10
+        );
 
     const sql = `
         UPDATE users
@@ -771,7 +1155,6 @@ const updateUser = async (req, res) => {
             address = ?
         WHERE id = ?
     `;
-
 
     db.query(
         sql,
@@ -788,8 +1171,10 @@ const updateUser = async (req, res) => {
 
                 console.log(err);
 
-
-                if (err.code === "ER_DUP_ENTRY") {
+                if (
+                    err.code ===
+                    "ER_DUP_ENTRY"
+                ) {
 
                     return res.status(409).json({
                         message:
@@ -797,20 +1182,19 @@ const updateUser = async (req, res) => {
                     });
                 }
 
-
                 return res.status(500).json({
-                    message: "Database error"
+                    message:
+                        "Database error"
                 });
             }
-
 
             if (result.affectedRows === 0) {
 
                 return res.status(404).json({
-                    message: "User not found"
+                    message:
+                        "User not found"
                 });
             }
-
 
             res.json({
 
@@ -827,14 +1211,11 @@ const updateUser = async (req, res) => {
 };
 
 
-
-
 const deleteUser = (req, res) => {
 
-    const id = Number(req.params.id);
+    const id =
+        Number(req.params.id);
 
-
-  
     if (req.user.id !== id) {
 
         return res.status(403).json({
@@ -843,10 +1224,8 @@ const deleteUser = (req, res) => {
         });
     }
 
-
     const sql =
         "DELETE FROM users WHERE id = ?";
-
 
     db.query(
         sql,
@@ -858,18 +1237,18 @@ const deleteUser = (req, res) => {
                 console.log(err);
 
                 return res.status(500).json({
-                    message: "Database error"
+                    message:
+                        "Database error"
                 });
             }
-
 
             if (result.affectedRows === 0) {
 
                 return res.status(404).json({
-                    message: "User not found"
+                    message:
+                        "User not found"
                 });
             }
-
 
             res.json({
                 message:
@@ -880,28 +1259,21 @@ const deleteUser = (req, res) => {
 };
 
 
-
 module.exports = {
 
     createUser,
-
     loginUser,
-
     getUsers,
-
     getUser,
-
     updateUser,
-
     deleteUser,
-
     sendTestEmail,
 
+    // NEW
+    sendRegistrationOTP,
+
     verifyOTP,
-
     forgotPassword,
-
     verifyResetOTP,
-
     resetPassword
 };
