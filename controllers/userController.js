@@ -237,7 +237,7 @@ const sendRegistrationOTP = async (req, res) => {
                 ).toString();
 
                 const expiry =
-                    Date.now()  + 20 * 60 * 1000;
+                    Date.now()  + 50 * 60 * 1000;
 
                 registrationOTPs.set(email, {
                     otp,
@@ -785,7 +785,7 @@ const forgotPassword = (req, res) => {
             ).toString();
 
             const expiry = new Date(
-                Date.now()  + 20 * 60 * 1000
+                Date.now()  + 50 * 60 * 1000
             );
 
             const updateSql = `
