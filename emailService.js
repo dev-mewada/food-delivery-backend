@@ -1,20 +1,23 @@
-const nodemailer = require("nodemailer");
+// const nodemailer = require("nodemailer");
 require("dotenv").config();
 
-const transporter = nodemailer.createTransport({
-    service: "gmail",
+// const transporter = nodemailer.createTransport({
+//     service: "gmail",
+//     auth: {
+//         user: process.env.EMAIL_USER,
+//         pass: process.env.EMAIL_PASSWORD
+//     }
+// });
 
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD
-    }
-});
+const { Resend } = require("resend");
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const sendOTPEmail = async (email, otp) => {
 
-    const mailOptions = {
-        from: process.env.EMAIL_USER,
-        to: email,
+    const { data, error } = await resend.emails.send({
+        from: "Food Delivery <onboarding@resend.dev>",
+        to: [email],
         subject: "Food Delivery - Email Verification OTP",
 
         html: `
@@ -24,13 +27,18 @@ const sendOTPEmail = async (email, otp) => {
 
             <h1>${otp}</h1>
 
-            <p>This OTP is valid for 10 minutes.</p>
+            <p>This OTP is valid for 50 minutes.</p>
 
             <p>Please do not share this OTP with anyone.</p>
         `
-    };
+    });
 
-    await transporter.sendMail(mailOptions);
+    if (error) {
+        console.log("Resend email error:", error);
+        throw new Error(error.message);
+    }
+
+    console.log("OTP email sent successfully:", data);
 };
 
 module.exports = {
