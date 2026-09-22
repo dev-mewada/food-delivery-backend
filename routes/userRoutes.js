@@ -12,6 +12,7 @@ const {
   updateUser,
   deleteUser,
   sendTestEmail,
+  sendRegistrationOTP,
   verifyOTP,
   forgotPassword,
   verifyResetOTP,
@@ -29,6 +30,9 @@ router.post("/", createUser);
 router.post("/login", loginUser);
 
 router.get("/test-email", sendTestEmail);
+
+// NEW
+router.post("/send-otp", sendRegistrationOTP);
 
 router.post("/verify-otp", verifyOTP);
 
